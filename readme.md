@@ -56,6 +56,38 @@ main函数
 
 实现了一个消息的编解码器 GobCodec，并且客户端与服务端实现了简单的协议交换(protocol exchange)，即允许客户端使用不同的编码方式。同时实现了服务端的雏形，建立连接，读取、处理并回复客户端的请求
 
-对 `net/rpc`，能被远程调用的函数 `func (t *T) MethodName(argType T1, replyType *T2) error` 封装结构体 Call 来承载一次 RPC 调用所需要的信息
+对 `net/rpc`，能被远程调用的函数 `func (t *T) MethodName(argType T1, replyType *T2) error` 封装结构体 Call 来承载一次 RPC 调用所需要的信息，在Call中添加类型为chan* Call的字段Done用于通知
+
+实现Client结构体 核心字段：编解码器，互斥锁，请求消息头，请求编号，未处理完的全部请求，是否可用
 
 实现一个支持异步和并发的高性能客户端
+
+如何将结构体的方法映射为服务？ 硬编码x 使用反射，可以获取某个结构体的所有方法，以及方法的参数和返回值类型
+
+```go
+func main() {
+	var wg sync.WaitGroup
+	typ := reflect.TypeOf(&wg)
+	for i := 0; i < typ.NumMethod(); i++ {
+		method := typ.Method(i)
+		argv := make([]string, 0, method.Type.NumIn())
+		returns := make([]string, 0, method.Type.NumOut())
+		// j 从 1 开始，第 0 个入参是 wg 自己。
+		for j := 1; j < method.Type.NumIn(); j++ {
+			argv = append(argv, method.Type.In(j).Name())
+		}
+		for j := 0; j < method.Type.NumOut(); j++ {
+			returns = append(returns, method.Type.Out(j).Name())
+		}
+		log.Printf("func (w *%s) %s(%s) %s",
+			typ.Elem().Name(),
+			method.Name,
+			strings.Join(argv, ","),
+			strings.Join(returns, ","))
+    }
+}
+```
+
+定义结构体methodType和service，实现 call 方法，能够通过反射值调用方法。
+
+
