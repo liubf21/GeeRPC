@@ -40,9 +40,13 @@ RPC的实现方法通常包括以下关键组件和步骤：
 一个典型的 RPC 调用：err = client.Call("Arith.Multiply", args, &reply)
 客户端发送的请求包括服务名 Arith，方法名 Multiply，参数 args 三个，服务端的响应包括错误 error，返回值 reply 2 个。
 
+### 1.
+
 消息的序列化和反序列化: Header 消息头，Codec对消息体进行编解码的接口，支持gob和json
 
-通信过程: 客户端和服务端协商实现(为了提升性能，一般在报文的最开始会规划固定的字节，来协商相关的信息。比如第1个字节用来表示序列化方式，第2个字节表示压缩方式，第3-6字节表示 header 的长度，7-10 字节表示 body 的长度。)这里只需要协商消息的编解码方式，放到结构体Option中，采用json编码，后续的 header 和 body 的编码方式由 Option 中的 CodeType 指定
+通信过程: 客户端和服务端协商实现(为了提升性能，一般在报文的最开始会规划固定的字节，来协商相关的信息。比如第1个字节用来表示序列化方式，第2个字节表示压缩方式，第3-6字节表示 header 的长度，7-10 字节表示 body 的长度。)
+
+这里只需要协商消息的编解码方式，放到结构体Option中，采用json编码，后续的 header 和 body 的编码方式由 Option 中的 CodeType 指定
 
 ```
 | Option{MagicNumber: xxx, CodecType: xxx} | Header{ServiceMethod ...} | Body interface{} |
@@ -56,11 +60,17 @@ main函数
 
 实现了一个消息的编解码器 GobCodec，并且客户端与服务端实现了简单的协议交换(protocol exchange)，即允许客户端使用不同的编码方式。同时实现了服务端的雏形，建立连接，读取、处理并回复客户端的请求
 
+### 2.
+
 对 `net/rpc`，能被远程调用的函数 `func (t *T) MethodName(argType T1, replyType *T2) error` 封装结构体 Call 来承载一次 RPC 调用所需要的信息，在Call中添加类型为chan* Call的字段Done用于通知
 
 实现Client结构体 核心字段：编解码器，互斥锁，请求消息头，请求编号，未处理完的全部请求，是否可用
 
+功能：接收响应、发送请求
+
 实现一个支持异步和并发的高性能客户端
+
+### 3.
 
 如何将结构体的方法映射为服务？ 硬编码x 使用反射，可以获取某个结构体的所有方法，以及方法的参数和返回值类型
 

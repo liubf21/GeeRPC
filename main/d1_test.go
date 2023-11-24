@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"geerpc/codec"
 	"log"
 	"net"
+	"testing"
 	"time"
 )
 
@@ -20,7 +21,7 @@ func startServer(addr chan string) {
 	geerpc.Accept(l)
 }
 
-func main() {
+func TestServer(t *testing.T) {
 	addr := make(chan string)
 	go startServer(addr)
 
