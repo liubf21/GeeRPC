@@ -1,13 +1,15 @@
 package geerpc
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"geerpc/codec"
 	"io"
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 type Call struct {
@@ -48,10 +50,10 @@ func newClientByCodec(cc codec.Codec, opt *Option) *Client {
 	return client
 }
 
-func NewClient(conn io.ReadWriteCloser, opt *Option) (*Client, error) {
+func NewClient(conn net.Conn, opt *Option) (*Client, error) {
 	f := codec.NewCodecFuncMap[opt.CodecType]
 	if f == nil {
-		err := errors.New("invalid codec type")
+		err := fmt.Errorf("invalid codec type %s", opt.CodecType)
 		log.Println("rpc client: options error:", err)
 		return nil, err
 	}
@@ -64,7 +66,7 @@ func NewClient(conn io.ReadWriteCloser, opt *Option) (*Client, error) {
 	return newClientByCodec(f(conn), opt), nil
 }
 
-var ErrShutdown = errors.New("connection is shut down")
+var ErrShutdown = fmt.Errorf("connection is shut down")
 
 func (client *Client) Close() error {
 	client.mu.Lock()
@@ -126,13 +128,13 @@ func (client *Client) receive() {
 		case call == nil: // call has been terminated
 			err = client.cc.ReadBody(nil)
 		case h.Error != "": // error from server
-			call.Error = errors.New(h.Error)
+			call.Error = fmt.Errorf(h.Error)
 			err = client.cc.ReadBody(nil)
 			call.done()
 		default: // read response body and notify application
 			err = client.cc.ReadBody(call.Reply)
 			if err != nil {
-				call.Error = errors.New("reading body " + err.Error())
+				call.Error = fmt.Errorf("reading body %s", err)
 			}
 			call.done()
 		}
@@ -187,9 +189,15 @@ func (client *Client) Go(serviceMethod string, args, reply interface{}, done cha
 }
 
 // Call invokes the named function, waits for it to complete, and returns its error status.
-func (client *Client) Call(serviceMethod string, args, reply interface{}) error {
-	call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done // receive response
-	return call.Error
+func (client *Client) Call(ctx context.Context, serviceMethod string, args, reply interface{}) error {
+	call := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
+	select {
+	case <-ctx.Done(): // context timeout
+		client.removeCall(call.Seq) // remove this call
+		return fmt.Errorf("rpc client: call failed: %s", ctx.Err())
+	case call := <-call.Done: // call is done
+		return call.Error
+	}
 }
 
 func parseOptions(opts ...*Option) (*Option, error) { // to make Option optional
@@ -197,7 +205,7 @@ func parseOptions(opts ...*Option) (*Option, error) { // to make Option optional
 		return DefaultOption, nil
 	}
 	if len(opts) != 1 {
-		return nil, errors.New("number of options is more than 1")
+		return nil, fmt.Errorf("number of options is more than 1")
 	}
 	opt := opts[0]
 	if opt.CodecType == "" {
@@ -206,12 +214,19 @@ func parseOptions(opts ...*Option) (*Option, error) { // to make Option optional
 	return opt, nil
 }
 
-func Dial(network, address string, opts ...*Option) (client *Client, err error) {
+type clientResult struct {
+	client *Client
+	err    error
+}
+
+type newClientFunc func(conn net.Conn, opt *Option) (client *Client, err error)
+
+func dialTimeout(f newClientFunc, network, address string, opts ...*Option) (client *Client, err error) {
 	opt, err := parseOptions(opts...) // parse options
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.Dial(network, address) // connect to server
+	conn, err := net.DialTimeout(network, address, opt.ConnectTimeout) // connect to server
 	if err != nil {
 		return nil, err
 	}
@@ -220,5 +235,23 @@ func Dial(network, address string, opts ...*Option) (client *Client, err error) 
 			_ = conn.Close()
 		}
 	}()
-	return NewClient(conn, opt)
+	ch := make(chan clientResult)
+	go func() { // start a goroutine to create client
+		client, err = f(conn, opt)
+		ch <- clientResult{client: client, err: err} // send result to ch
+	}()
+	if opt.ConnectTimeout == 0 { // no timeout
+		result := <-ch // wait for result from goroutine
+		return result.client, result.err
+	}
+	select {
+	case <-time.After(opt.ConnectTimeout): // timeout
+		return nil, fmt.Errorf("rpc client: connect timeout: expect within %s", opt.ConnectTimeout)
+	case result := <-ch: // receive result from goroutine
+		return result.client, result.err
+	}
+}
+
+func Dial(network, address string, opts ...*Option) (client *Client, err error) {
+	return dialTimeout(NewClient, network, address, opts...)
 }

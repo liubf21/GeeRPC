@@ -2,7 +2,7 @@ package geerpc
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"geerpc/codec"
 	"io"
 	"log"
@@ -10,18 +10,22 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 const MagicNumber = 0x3bef5c // magic number identifies rpc request
 
 type Option struct {
-	MagicNumber int
-	CodecType   codec.Type
+	MagicNumber    int
+	CodecType      codec.Type
+	ConnectTimeout time.Duration // 0 means no limit
+	HandleTimeout  time.Duration
 }
 
 var DefaultOption = &Option{
-	MagicNumber: MagicNumber,
-	CodecType:   codec.GobType,
+	MagicNumber:    MagicNumber,
+	CodecType:      codec.GobType,
+	ConnectTimeout: time.Second * 10,
 }
 
 type Server struct {
@@ -35,7 +39,7 @@ func NewServer() *Server {
 func (s *Server) Register(rcvr interface{}) error {
 	svc := newService(rcvr)                                     // create service
 	if _, dup := s.serviceMap.LoadOrStore(svc.name, svc); dup { // check if service is already registered
-		return errors.New("rpc: service already defined: " + svc.name)
+		return fmt.Errorf("rpc server: service already defined: %s", svc.name)
 	}
 	return nil
 }
@@ -45,19 +49,19 @@ func Register(rcvr interface{}) error { return DefaultServer.Register(rcvr) }
 func (s *Server) findService(serviceMethod string) (svc *service, mtype *methodType, err error) {
 	dot := strings.LastIndex(serviceMethod, ".") // find the last index of '.'
 	if dot < 0 {
-		err = errors.New("rpc server: service/method request ill-formed: " + serviceMethod)
+		err = fmt.Errorf("rpc server: service/method request ill-formed: %s", serviceMethod)
 		return
 	}
 	serviceName, methodName := serviceMethod[:dot], serviceMethod[dot+1:] // get service name and method name
 	svci, ok := s.serviceMap.Load(serviceName)                            // get service from service map
 	if !ok {
-		err = errors.New("rpc server: can't find service " + serviceName)
+		err = fmt.Errorf("rpc server: can't find service %s", serviceName)
 		return
 	}
 	svc = svci.(*service) // type assertion
 	mtype = svc.method[methodName]
 	if mtype == nil {
-		err = errors.New("rpc server: can't find method " + methodName)
+		err = fmt.Errorf("rpc server: can't find method %s", methodName)
 	}
 	return
 }
@@ -90,12 +94,12 @@ func (s *Server) ServerConn(conn net.Conn) {
 		log.Printf("rpc server: invalid codec type %s", opt.CodecType)
 		return
 	}
-	s.serveCodec(f(conn))
+	s.serveCodec(f(conn), &opt) // serve requests using codec
 }
 
 var invalidRequest = struct{}{}
 
-func (s *Server) serveCodec(cc codec.Codec) {
+func (s *Server) serveCodec(cc codec.Codec, opt *Option) {
 	sending := new(sync.Mutex) // make sure to send a complete response
 	wg := new(sync.WaitGroup)  // wait until all request are handled
 	for {
@@ -109,7 +113,7 @@ func (s *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go s.handleRequest(cc, req, sending, wg) // handle request concurrently
+		go s.handleRequest(cc, req, sending, wg, opt.HandleTimeout) // handle request
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -167,16 +171,36 @@ func (s *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{},
 	}
 }
 
-func (s *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+func (s *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
-	log.Println("rpc server: receive request:", req.h, req.argv)
-	err := req.svc.call(req.mtype, req.argv, req.replyv) // call service method
-	if err != nil {
-		req.h.Error = err.Error()
-		s.sendResponse(cc, req.h, invalidRequest, sending)
+	called := make(chan struct{})
+	sent := make(chan struct{})
+	go func() {
+		log.Println("rpc server: receive request:", req.h, req.argv)
+		err := req.svc.call(req.mtype, req.argv, req.replyv) // call service method
+		called <- struct{}{}
+		if err != nil {
+			req.h.Error = err.Error()
+			s.sendResponse(cc, req.h, invalidRequest, sending)
+			sent <- struct{}{}
+			return
+		}
+		s.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		sent <- struct{}{}
+	}()
+
+	if timeout == 0 {
+		<-called
+		<-sent
 		return
 	}
-	s.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+	select {
+	case <-time.After(timeout):
+		req.h.Error = fmt.Sprintf("rpc server: request handle timeout: expect within %s", timeout)
+		s.sendResponse(cc, req.h, invalidRequest, sending)
+	case <-called:
+		<-sent
+	}
 }
 
 var DefaultServer = NewServer()
