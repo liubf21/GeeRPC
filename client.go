@@ -35,7 +35,9 @@ type Client struct {
 	shutdown bool             // server has told us to stop
 }
 
-func NewClientByCodec(cc codec.Codec, opt *Option) *Client {
+var _ io.Closer = (*Client)(nil) // Client must implement io.Closer interface
+
+func newClientByCodec(cc codec.Codec, opt *Option) *Client {
 	client := &Client{
 		seq:     1, // seq starts from 1, 0 means invalid call
 		cc:      cc,
@@ -59,10 +61,8 @@ func NewClient(conn io.ReadWriteCloser, opt *Option) (*Client, error) {
 		_ = conn.Close()
 		return nil, err
 	}
-	return NewClientByCodec(f(conn), opt), nil
+	return newClientByCodec(f(conn), opt), nil
 }
-
-var _ io.Closer = (*Client)(nil) // Client must implement io.Closer interface
 
 var ErrShutdown = errors.New("connection is shut down")
 
@@ -129,7 +129,7 @@ func (client *Client) receive() {
 			call.Error = errors.New(h.Error)
 			err = client.cc.ReadBody(nil)
 			call.done()
-		default:
+		default: // read response body and notify application
 			err = client.cc.ReadBody(call.Reply)
 			if err != nil {
 				call.Error = errors.New("reading body " + err.Error())

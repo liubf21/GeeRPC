@@ -98,6 +98,8 @@ func main() {
 }
 ```
 
-定义结构体methodType和service，实现 call 方法，能够通过反射值调用方法。
+通过反射实现结构体与服务的映射关系，定义结构体methodType和service，实现 call 方法，能够通过反射值调用方法。
 
+从接收到请求到回复的步骤：第一步，根据入参类型，将请求的 body 反序列化；第二步，调用 service.call，完成方法调用；第三步，将 reply 序列化为字节流，构造响应报文，返回。
 
+补充完善服务端中readRequest和handleRequest方法
