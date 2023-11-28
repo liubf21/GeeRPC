@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +15,12 @@ import (
 )
 
 const MagicNumber = 0x3bef5c // magic number identifies rpc request
+
+const (
+	connected        = "200 Connected to Gee RPC"
+	defaultRPCPath   = "/_geerpc_"
+	defaultDebugPath = "/debug/geerpc"
+)
 
 type Option struct {
 	MagicNumber    int
@@ -203,6 +210,32 @@ func (s *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex
 	}
 }
 
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed) // 405
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack() // get underlying TCP connection
+	if err != nil {
+		log.Println("rpc hijacking", r.RemoteAddr, ":", err)
+		return
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n") // send response
+	s.ServerConn(conn)
+}
+
+func (s *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, s)
+	http.Handle(defaultDebugPath, debugHTTP{s}) // use debugHTTP to handle debug path
+	log.Println("rpc server debug path:", defaultDebugPath)
+}
+
 var DefaultServer = NewServer()
 
 func Accept(lis net.Listener) { DefaultServer.Accept(lis) }
+
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
+}

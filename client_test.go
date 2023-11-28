@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,4 +68,33 @@ func TestClient_Call(t *testing.T) {
 		err := client.Call(context.Background(), "Bar.Timeout", 1, &reply)
 		_assert(err != nil && strings.Contains(err.Error(), "handle timeout"), "expect a timeout error")
 	})
+}
+
+func TestXDial(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" { // darwin is the GOOS for macOS
+		ch := make(chan struct{})
+
+		// 创建临时目录
+		dir, err := os.MkdirTemp("", "geerpc_test")
+		if err != nil {
+			t.Fatal("failed to create temp dir", err)
+		}
+		defer os.RemoveAll(dir) // 清理临时目录
+
+		addr := dir + "/geerpc_test.sock"
+
+		go func() {
+			_ = os.Remove(addr)
+			l, err := net.Listen("unix", addr)
+			if err != nil {
+				t.Fatal("failed to listen unix socket", err)
+			}
+			ch <- struct{}{}
+			Accept(l) // 假设这是你的自定义函数
+		}()
+
+		<-ch
+		_, err = XDial("unix@"+addr, &Option{MagicNumber: MagicNumber}) // 假设XDial是你的自定义函数
+		_assert(err == nil, "XDial unix socket error: %v", err)         // 假设_assert是你的自定义断言函数
+	}
 }

@@ -129,3 +129,17 @@ func main() {
 
 方式： 1. 使用 context.WithTimeout; 2. 使用 time.After() 结合 select+chan 完成
 
+### 5.
+
+使用HTTP 协议的 CONNECT 方法完成协议转换
+
+对 RPC 服务端来，需要做的是将 HTTP 协议转换为 RPC 协议，对客户端来说，需要新增通过 HTTP CONNECT 请求创建连接的逻辑。
+
+通信过程：
+
+客户端向 RPC 服务器发送 CONNECT 请求 `CONNECT 10.0.0.1:9999/_geerpc_ HTTP/1.0`
+
+RPC 服务器返回 HTTP 200 状态码表示连接建立。`HTTP/1.0 200 Connected to Gee RPC`
+
+客户端使用创建好的连接发送 RPC 报文，先发送 Option，再发送 N 个请求报文，服务端处理 RPC 请求并响应。
+
