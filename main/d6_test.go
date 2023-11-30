@@ -12,7 +12,7 @@ import (
 )
 
 func (f Foo) Sleep(args Args, reply *int) error {
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * time.Duration(args.Num1))
 	*reply = args.Num1 + args.Num2
 	return nil
 }

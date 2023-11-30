@@ -169,4 +169,8 @@ RPC 服务器返回 HTTP 200 状态码表示连接建立。`HTTP/1.0 200 Connect
 
 注册中心的功能还有很多，比如配置的动态同步、通知机制等。比较常用的注册中心有 etcd、zookeeper、consul，一般比较出名的微服务或者 RPC 框架，这些主流的注册中心都是支持的。
 
-客户端实现基于注册中心的服务发现机制
+定义GeeRegistry结构体，实现方法 putServer、aliveServers，采用HTTP协议提供服务，将有用信息承载在HTTP Header，其中Get通过X-Geerpc-Servers承载，Post通过X-Geerpc-Server承载
+
+实现Heartbeat方法，便于服务启动时定时向注册中心发送心跳
+
+客户端实现基于注册中心的服务发现机制：在xclient中实现GeeRegistryDiscovery，基于MultiServersDiscovery，包括registry存注册中心地址，timeout服务列表的过期时间，lastUpdate最后从注册中心更新服务列表的时间(默认10s过期)
