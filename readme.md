@@ -1,33 +1,274 @@
 # GeeRPC
 
+[TOC]
+
 基于Go的RPC框架，学习自[7天用Go从零实现系列](https://geektutu.com/post/geerpc.html)
 
 参照 golang 标准库 net/rpc，实现了服务端以及支持并发的客户端，并且支持选择不同的序列化与反序列化方式；为了防止服务挂死，在其中一些关键部分添加了超时处理机制；支持 TCP、Unix、HTTP 等多种传输协议；支持多种负载均衡模式，还实现了一个简易的服务注册和发现中心。
 
-## RPC
+TODO:
+- [ ] 基本功能实现
+  - [x] 服务端
+  - [x] 客户端
+  - [x] 服务注册
+  - [x] 超时处理
+  - [x] HTTP协议
+  - [x] 负载均衡
+  - [x] 服务发现和注册中心
+- [ ] ProtoBuf 支持
+- [ ] 负载均衡策略增加：加权轮询、一致性哈希
+- [ ] 测试 `net/rpc` 包
+- [ ] 跨语言调用测试
+- [ ] 
+
+## RPC 概念
+
 RPC（Remote Procedure Call）是一种远程过程调用的模式，允许在网络上的不同计算机之间进行函数调用，使得分布式系统可以像调用本地函数一样调用远程函数。它的核心思想是隐藏分布式系统的底层通信细节，使开发者能够更方便地进行跨网络的函数调用，提高代码的可读性和开发效率。
 
 核心思想：
 
-1. 客户端-服务器模型：RPC基于客户端-服务器模型，客户端发起调用请求，而服务器响应请求并返回结果。
-2. 远程过程调用：RPC使得开发者可以调用在远程服务器上的函数，就像调用本地函数一样。客户端调用远程函数时，封装函数参数并通过网络传输到服务器端，服务器接收到请求后执行函数调用，并将结果返回给客户端。
-3. 序列化和反序列化：由于数据需要在网络上进行传输，RPC需要将函数参数和返回结果序列化（即转换为二进制或其他网络可传输的格式），以便在网络上进行传输。在接收端，同样需要进行反序列化（即将接收到的二进制数据转换为可用的数据对象）。
+1. 客户端-服务器模型：RPC遵循客户端发起请求，服务器端响应并返回结果的模式。
+2. 透明性：RPC隐藏了网络通信的复杂性，使得开发者能够专注于业务逻辑。
+3. 序列化与反序列化：为了网络传输，RPC需要将数据转换为可传输的格式（序列化），并在接收端将其还原（反序列化）。
 
-实现方法：
+### 为什么需要RPC
 
-RPC的实现方法通常包括以下关键组件和步骤：
+[既然有 HTTP 协议，为什么还要有 RPC？](https://xiaolincoding.com/network/2_http/http_rpc.html)
 
-1. 通信协议：选择合适的通信协议用于在客户端和服务器之间进行通信。常见的选择包括TCP/IP、HTTP、WebSocket等。
-2. 序列化和反序列化：选择适当的序列化和反序列化机制，以便在网络上传输函数调用的参数和结果。常见的序列化格式有JSON、XML、Protocol Buffers等。
-3. 接口定义：定义客户端和服务器之间的接口，明确函数的名称、参数和返回值，以便客户端可以正确构造请求，服务器可以正确解析请求并发送响应。
-4. 代理和存根：客户端和服务器通过代理和存根进行通信。客户端的代理对象封装了远程调用的细节，使得调用看起来像是本地函数调用。服务器的存根对象负责接收请求，并将请求路由到相应的函数执行。
-5. 远程调用执行：服务器接收到请求后，根据请求中的函数名称，找到对应的函数，并将参数传递给该函数进行执行。执行完成后，服务器将结果返回给客户端。
-6. 客户端回调处理：在某些情况下，客户端可能需要处理回调函数。例如，在异步调用中，客户端发送请求后可以继续执行其他操作，并在将来接收到服务器的响应后触发回调函数进行处理。
-7. 错误处理和异常传递：RPC需要正确处理网络通信中的错误和异常情况，并将错误信息传递给调用方。服务器可以抛出异常，并将异常信息序列化后返回给客户端。
+RPC（远程过程调用）作为一种通信机制，在现代软件开发中扮演着重要角色。以下是RPC的几个关键优势，解释了为什么我们需要它：
 
-实现RPC的具体细节和步骤可能因使用的编程语言、框架和库而有所不同。许多语言和框架都提供了方便的工具和库来简化RPC的实现，如Go语言的标准库中的net/rpc包、Java语言的Java RMI、Python语言的Pyro等。
+#### 1. 实现微服务拆分
+在传统的单体架构中，所有的功能都集成在一个大型的应用程序中。随着应用的增长，这种架构会导致代码复杂度高、部署困难和迭代缓慢。RPC支持将单体应用拆分为多个独立的微服务，每个服务负责特定的业务功能。这样，团队可以并行开发和部署不同的服务，提高了迭代效率和系统的可维护性。
 
-## RPC框架的实现
+#### 2. 实现跨语言调用
+在多语言的软件开发环境中，RPC提供了一种机制，允许不同编程语言编写的服务之间进行通信。这意味着开发者可以根据需求和团队专长选择合适的编程语言来开发服务，同时还能保持整个系统的协同工作。RPC框架通常提供了多种语言的客户端库，简化了跨语言调用的复杂性。
+
+#### 3. 实现分布式系统
+分布式系统通过在多个计算机上分布计算任务来提高性能和可靠性。RPC框架使得在分布式环境中的服务调用变得简单，就像调用本地方法一样。它隐藏了网络通信的细节，使得开发者可以专注于业务逻辑，而不必担心分布式系统带来的复杂性。此外，RPC框架还支持负载均衡和服务发现，这对于构建可扩展的分布式应用至关重要。
+
+#### 4. 实现异常隔离
+在分布式系统中，服务之间的依赖关系可能导致错误传播，影响整个系统的稳定性。RPC框架通常提供了异常隔离机制，确保一个服务的失败不会直接影响到其他服务。通过在客户端和服务端处理异常，RPC框架帮助开发者实现更加健壮和可靠的系统设计。
+
+总结来说，RPC通过简化微服务架构的实现、支持跨语言调用、提供分布式系统的通信基础，以及实现异常隔离，成为了现代软件开发中不可或缺的工具。它使得开发者能够构建更加灵活、可扩展和可靠的系统。
+
+ ### Go语言中的`net/rpc`包
+
+Go语言的`net/rpc`包是一个内置的RPC实现，它提供了一套简单的API来实现远程过程调用。这个包的特点和使用方法如下：
+
+#### 简单易用的API
+- `net/rpc`包的API设计简洁，易于学习和使用。它允许开发者快速构建客户端和服务器端的RPC通信。
+
+#### 基于接口的服务定义
+- 服务端需要实现一个接口，该接口定义了RPC服务的方法。客户端通过这个接口进行远程调用。
+
+#### 并发处理能力
+- Go语言的并发模型（goroutines）被`net/rpc`包自然地集成，使得服务端能够处理多个并发请求。
+
+### 服务定义和注册
+- **服务对象**: RPC服务通过定义一个Go类型来创建，该类型包含特定签名的方法。
+  - 方法必须是公开的，接受两个参数（第一个是参数，第二个是结果，且第二个参数必须是指针），并返回一个`error`。
+- **注册服务**: 使用`rpc.Register`函数将服务实例注册到RPC服务器。
+
+```go
+type Args struct {
+    A, B int
+}
+
+type Arith int
+
+func (t *Arith) Multiply(args *Args, reply *int) error {
+    *reply = args.A * args.B
+    return nil
+}
+
+func main() {
+    arith := new(Arith)
+    rpc.Register(arith)
+}
+```
+
+### 网络监听和服务处理
+- **支持的协议**: `net/rpc`支持多种网络协议，包括TCP和HTTP。
+- **TCP服务器**: 通过`net.Listen`创建TCP监听器，并使用`rpc.Accept`开始接受客户端连接。
+- **HTTP服务器**: 通过`rpc.HandleHTTP`结合HTTP协议提供RPC服务，并使用`http.ListenAndServe`启动HTTP服务器。
+
+TCP服务器示例：
+```go
+listener, _ := net.Listen("tcp", ":1234")
+defer listener.Close()
+rpc.Accept(listener)
+```
+
+HTTP服务器示例：
+```go
+rpc.HandleHTTP()
+http.ListenAndServe(":1234", nil)
+```
+
+### 客户端实现
+- **拨号服务器**: 客户端使用`rpc.Dial`函数连接到RPC服务器。
+- **同步调用**: 使用`client.Call`方法进行同步远程调用，传递方法名、参数和结果指针。
+
+  ```go
+  client, err := rpc.Dial("tcp", "server:1234")
+  // 或使用 rpc.DialHTTP("tcp", "server:1234")
+  if err != nil {
+      log.Fatal("Dialing:", err)
+  }
+
+  args := &Args{7, 8}
+  var reply int
+  err = client.Call("Arith.Multiply", args, &reply)
+  ```
+
+### 高级特性
+- **并发处理**: 自然支持并发请求处理。
+- **自定义编码**: 默认使用Gob编码，但可以通过实现`rpc.ServerCodec`接口来使用其他编码方式，如JSON。
+- **超时和取消**: 可以结合`context`包实现调用的超时和取消。
+- **错误处理**: 提供了网络错误和调用错误的处理机制。
+- **安全性**: 支持通过TLS等方式进行加密通信。
+- **服务发现和负载均衡**: 在分布式环境中，可以集成服务发现和负载均衡机制。
+
+需要注意的是，尽管`net/rpc`包功能强大，但它不支持跨语言调用。这意味着客户端和服务器端必须使用相同的编程语言（Go）来实现。
+
+在后续部分，我们可以探讨本项目与Go标准库`net/rpc`包的对比，特别是在性能优化、协议支持、序列化选项等方面的差异和改进。这将帮助读者理解本项目如何提供更现代、更高效的RPC解决方案。
+
+ 确实，对于初学者来说，代码示例是非常重要的。下面是Go语言中`net/rpc`包的使用示例，包括服务端和客户端的实现。
+
+### 服务端示例
+
+首先，我们定义一个服务接口，并实现这个接口来提供远程调用的方法。
+
+```go
+package main
+
+import (
+	"fmt"
+	"net"
+	"net/rpc"
+	"os"
+)
+
+// 定义服务接口
+type Arith int
+
+// 实现接口方法
+func (t Arith) Multiply(args *struct{ A, B int }, reply *int) error {
+	*reply = args.A * args.B
+	return nil
+}
+
+func main() {
+	// 注册服务
+	rpc.Register(Arith(0))
+
+	// 创建TCP监听器
+	listener, err := net.Listen("tcp", ":1234")
+	if err != nil {
+		fmt.Println("Error listening:", err.Error())
+		os.Exit(1)
+	}
+
+	fmt.Println("Listening on :1234")
+
+	// 开始接受连接
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("Error accepting: ", err.Error())
+			os.Exit(1)
+		}
+		go rpc.ServeConn(conn)
+	}
+}
+```
+
+### 客户端示例
+
+在客户端，我们创建一个连接到服务端的RPC客户端，并调用服务端的方法。
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/rpc"
+	"os"
+)
+
+func main() {
+	// 拨号连接到服务端
+	client, err := rpc.Dial("tcp", "localhost:1234")
+	if err != nil {
+		fmt.Println("Error dialing:", err.Error())
+		os.Exit(1)
+	}
+
+	// 创建请求参数
+	args := struct{ A, B int }{7, 8}
+	var reply int
+
+	// 调用服务端方法
+	err = client.Call("Arith.Multiply", &args, &reply)
+	if err != nil {
+		fmt.Println("Error calling Arith.Multiply:", err.Error())
+		os.Exit(1)
+	}
+
+	fmt.Printf("Arith.Multiply(7, 8) = %d\n", reply)
+}
+```
+
+在这两个示例中，我们创建了一个简单的算术服务，它提供了一个乘法操作。服务端监听在`localhost:1234`，客户端连接到这个地址并调用`Multiply`方法。
+
+这些示例展示了`net/rpc`包的基本用法，包括服务定义、注册、监听、拨号和远程调用。对于初学者来说，这些代码可以作为学习和实践RPC的起点。在实际应用中，可能需要处理更复杂的数据结构、错误处理和并发控制。
+
+## RPC 框架实现方法
+
+### 1. 通信协议选择
+- **目的**：确定客户端与服务器之间数据交换的协议，这将影响通信的稳定性和性能。
+- **选项**：TCP/IP提供可靠的连接，HTTP/HTTPS支持Web集成，WebSocket适用于实时应用。
+- **实现**：根据所选协议，实现相应的网络通信层，处理连接建立、数据发送和接收等。
+
+### 2. 序列化与反序列化
+- **目的**：为了在网络上传输数据，需要将数据结构转换为字节流。
+- **机制**：选择合适的序列化机制，如JSON、XML、Protocol Buffers等，根据性能和兼容性需求做出选择。
+- **实现**：开发或集成序列化库，用于在客户端和服务端之间转换数据格式。
+
+### 3. 接口定义
+- **目的**：明确服务的契约，包括可用的方法、参数和返回类型。
+- **方法**：使用接口定义语言（IDL）或代码生成工具来定义服务接口。
+- **实现**：在客户端和服务端生成相应的代码，以实现接口调用和处理。
+
+### 4. 代理与存根
+- **目的**：代理和存根是RPC的抽象层，它们隐藏了网络通信的细节。
+- **代理**：客户端的代理对象允许开发者像调用本地方法一样调用远程方法。
+- **存根**：服务器的存根对象接收网络请求，将其转换为本地方法调用，并处理响应。
+
+### 5. 远程调用执行
+- **流程**：服务器接收到请求后，根据请求中的信息调用相应的本地方法，并传递参数。
+- **结果**：方法执行后，服务器将结果序列化并发送回客户端。
+
+### 6. 客户端回调处理
+- **异步调用**：在异步RPC中，客户端在发送请求后可以继续执行，而不必等待响应。
+- **回调机制**：客户端提供一个回调函数，当服务器处理完成并返回结果时，回调函数被触发。
+
+### 7. 错误处理和异常传递
+- **异常捕获**：RPC框架应能捕获网络通信过程中的错误和服务器端的异常。
+- **错误传递**：将异常信息封装并序列化，然后通过网络传递给客户端，以便进行错误处理。
+
+### 8. 负载均衡与服务发现
+- **负载均衡**：在多服务器环境中，通过负载均衡策略分散请求，提高系统的可用性和扩展性。
+- **服务发现**：客户端需要一种机制来发现服务实例，这可以通过服务注册中心或DNS服务实现。
+
+### 9. 安全性考虑
+- **认证**：确保只有授权的客户端可以调用服务。
+- **加密**：对传输的数据进行加密，保护数据的隐私和完整性。
+
+在实现RPC框架时，这些步骤和组件需要综合考虑，以确保框架的健壮性、可扩展性和安全性。开发者可以根据具体的应用场景和需求，选择合适的技术和工具来构建RPC框架。
+
+
+## GeeRPC 的实现
 
 传输协议 报文编码 连接超时 异步请求和并发
 
@@ -174,3 +415,98 @@ RPC 服务器返回 HTTP 200 状态码表示连接建立。`HTTP/1.0 200 Connect
 实现Heartbeat方法，便于服务启动时定时向注册中心发送心跳
 
 客户端实现基于注册中心的服务发现机制：在xclient中实现GeeRegistryDiscovery，基于MultiServersDiscovery，包括registry存注册中心地址，timeout服务列表的过期时间，lastUpdate最后从注册中心更新服务列表的时间(默认10s过期)
+
+## 使用gRPC进行Go和Python之间的RPC调用
+
+gRPC使用Protocol Buffers（protobuf）作为接口描述语言（IDL），允许你定义服务接口和消息格式，然后自动生成对应语言的代码。这样，Go和Python客户端和服务端就可以使用相同的接口定义进行通信。
+
+首先，你需要定义一个`.proto`文件来描述服务接口和消息格式。然后，使用protobuf编译器（`protoc`）为Go和Python生成代码。
+
+### 1. 定义服务接口（`calculator.proto`）:
+
+```protobuf
+syntax = "proto3";
+
+// 定义请求和响应消息
+message MultiplyRequest {
+    int32 a = 1;
+    int32 b = 2;
+}
+
+message MultiplyResponse {
+    int32 result = 1;
+}
+
+// 定义服务接口
+service CalculatorService {
+    rpc Multiply (MultiplyRequest) returns (MultiplyResponse);
+}
+```
+
+### 2. 生成Go和Python代码:
+
+使用`protoc`编译器为Go和Python生成代码。确保你已经安装了`protoc`和相应的gRPC插件。
+
+```sh
+protoc --go_out=. --go-grpc_out=. calculator.proto
+protoc --python_out=. calculator.proto
+```
+
+这将生成Go和Python的代码，你可以在Go和Python项目中使用这些代码。
+
+### 3. 实现Go服务端:
+
+使用生成的Go代码实现服务端。
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"net"
+
+	"google.golang.org/grpc"
+	"./calculatorpb" // 导入生成的Go代码
+)
+
+type server struct{}
+
+func (s *server) Multiply(ctx context.Context, req *calculatorpb.MultiplyRequest) (*calculatorpb.MultiplyResponse, error) {
+	return &calculatorpb.MultiplyResponse{Result: int32(req.A * req.B)}, nil
+}
+
+func main() {
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	s := grpc.NewServer()
+	calculatorpb.RegisterCalculatorServiceServer(s, &server{})
+	log.Printf("server listening at %v", lis.Addr())
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
+}
+```
+
+### 4. 实现Python客户端:
+
+使用生成的Python代码实现客户端。
+
+```python
+import grpc
+from calculatorpb import calculator_service_pb2
+from calculatorpb import calculator_service_pb2_grpc
+
+def multiply(a, b):
+    with grpc.insecure_channel('localhost:50051') as channel:
+        stub = calculator_service_pb2_grpc.CalculatorServiceStub(channel)
+        request = calculator_service_pb2.MultiplyRequest(a=a, b=b)
+        response = stub.Multiply(request)
+        return response.result
+
+print(multiply(3, 4))
+```
+
+在这个示例中，我们定义了一个简单的乘法服务。Go服务端实现了这个服务，而Python客户端调用了这个服务。通过gRPC，我们能够在不同语言之间进行标准的RPC调用，而不需要手动处理HTTP请求和响应。这种方法更加符合RPC的设计理念，并且能够提供更好的类型安全和性能。
