@@ -19,7 +19,7 @@ TODO:
 - [ ] 负载均衡策略增加：加权轮询、一致性哈希
 - [ ] 测试 `net/rpc` 包
 - [ ] 跨语言调用测试
-- [ ] 
+- [ ] 问题：实现部分并不直观，对入门者很难想到为什么要这么设计和抽象
 
 ## RPC 概念
 
@@ -133,7 +133,6 @@ http.ListenAndServe(":1234", nil)
 
 在后续部分，我们可以探讨本项目与Go标准库`net/rpc`包的对比，特别是在性能优化、协议支持、序列化选项等方面的差异和改进。这将帮助读者理解本项目如何提供更现代、更高效的RPC解决方案。
 
- 确实，对于初学者来说，代码示例是非常重要的。下面是Go语言中`net/rpc`包的使用示例，包括服务端和客户端的实现。
 
 ### 服务端示例
 
@@ -278,24 +277,32 @@ func main() {
 
 注册中心通常还需要实现服务动态添加、删除，使用心跳确保服务处于可用状态等功能。
 
-一个典型的 RPC 调用：err = client.Call("Arith.Multiply", args, &reply)
+一个典型的 RPC 调用：`err = client.Call("Arith.Multiply", args, &reply)`
 客户端发送的请求包括服务名 Arith，方法名 Multiply，参数 args 三个，服务端的响应包括错误 error，返回值 reply 2 个。
 
 ### 1.
 
-消息的序列化和反序列化: Header 消息头，Codec对消息体进行编解码的接口，支持gob和json
+消息的序列化和反序列化: Header 消息头（需要包含服务名、方法名、请求序号、返回的错误信息，将请求和响应中的参数和返回值抽象为 body），Codec 抽象为对消息体进行编解码的接口，目前实现了 gob，之后考虑支持 json 和 protobuf 等
 
-通信过程: 客户端和服务端协商实现(为了提升性能，一般在报文的最开始会规划固定的字节，来协商相关的信息。比如第1个字节用来表示序列化方式，第2个字节表示压缩方式，第3-6字节表示 header 的长度，7-10 字节表示 body 的长度。)
+通信过程: 客户端和服务端协商实现
+
+> 客户端与服务端的通信需要协商一些内容，例如 HTTP 报文，分为 header 和 body 2 部分，body 的格式和长度通过 header 中的 Content-Type 和 Content-Length 指定，服务端通过解析 header 就能够知道如何从 body 中读取需要的信息。对于 RPC 协议来说，这部分协商是需要自主设计的。为了提升性能，一般在报文的最开始会规划固定的字节，来协商相关的信息。比如第1个字节用来表示序列化方式，第2个字节表示压缩方式，第3-6字节表示 header 的长度，7-10 字节表示 body 的长度。
 
 这里只需要协商消息的编解码方式，放到结构体Option中，采用json编码，后续的 header 和 body 的编码方式由 Option 中的 CodeType 指定
 
+报文形式如下：
 ```
 | Option{MagicNumber: xxx, CodecType: xxx} | Header{ServiceMethod ...} | Body interface{} |
 | <------      固定 JSON 编码      ------>  | <-------   编码方式由 CodeType 决定   ------->|
 ```
 
 
-服务端的实现: serveCodec 包含三个阶段 readRequest handleRequest sendResponse
+服务端的实现: 
+1. 用 net.Listener 实现 Accept，对每个连接建立一个独立的 goroutine 处理，即 ServeConn
+2. 先解码 Option，通过 CodeType 创建对应的编解码器，传入 serveCodec，
+3. serveCodec 包含三个阶段 readRequest handleRequest sendResponse
+   1. handleRequest 并发处理请求
+   2. sendResponse 发送响应，需要加锁，防止多个请求同时写入
 
 main函数
 
@@ -405,7 +412,7 @@ RPC 服务器返回 HTTP 200 状态码表示连接建立。`HTTP/1.0 200 Connect
 实现一个简单的注册中心，支持服务注册、接收心跳等功能
 
 1. 服务端启动后，向注册中心发送注册消息，注册中心得知该服务已经启动，处于可用状态。一般来说，服务端还需要定期向注册中心发送心跳，证明自己还活着。
-2. 客户端向注册中心询问，当前哪天服务是可用的，注册中心将可用的服务列表返回客户端。
+2. 客户端向注册中心询问，当前哪个服务是可用的，注册中心将可用的服务列表返回客户端。
 3. 客户端根据注册中心得到的服务列表，选择其中一个发起调用。
 
 注册中心的功能还有很多，比如配置的动态同步、通知机制等。比较常用的注册中心有 etcd、zookeeper、consul，一般比较出名的微服务或者 RPC 框架，这些主流的注册中心都是支持的。
